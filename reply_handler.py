@@ -262,10 +262,45 @@ Return JSON:
 """
     payload, raw_text = _model_json(prompt)
     tweets = _normalize_string_list(payload.get("final_tweets"))
-    if not tweets:
-        tweets = _fallback_lines(raw_text)[:4]
-    return tweets
 
+    # First fallback: try extracting JSON again from raw text
+    if not tweets:
+        parsed_payload = _extract_json_payload(raw_text)
+
+        if parsed_payload.get("final_tweets"):
+            tweets = _normalize_string_list(
+                parsed_payload.get("final_tweets")
+            )
+
+    # Second fallback: if Gemini returns numbered plain text instead of JSON
+    if not tweets:
+        fallback_candidates = []
+
+        for line in raw_text.splitlines():
+            cleaned = line.strip()
+
+            # skip markdown/json formatting noise
+            if cleaned.startswith("```"):
+                continue
+            if cleaned in ["{", "}", "[", "]"]:
+                continue
+            if '"final_tweets"' in cleaned:
+                continue
+
+            # match numbered tweet lines like: 1. tweet text
+            match = re.match(r"^\d+[.)]\s*(.+)", cleaned)
+            if match:
+                fallback_candidates.append(match.group(1).strip())
+
+        tweets = fallback_candidates[:4]
+
+    # Final fallback → fail gracefully instead of sending garbage
+    if not tweets:
+        tweets = [
+            "Couldn’t generate clean drafts for this article. Try REGEN or select another story."
+        ]
+
+    return tweets
 
 def _run_generation_pipeline(selected):
     context = _build_post_context(selected)
