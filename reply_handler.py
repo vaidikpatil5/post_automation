@@ -107,7 +107,7 @@ def trigger_github_workflow():
     }
 
     payload = {
-        "ref": "main"
+        "ref": "master"
     }
 
     try:
