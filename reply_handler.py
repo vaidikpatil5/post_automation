@@ -102,4 +102,4 @@ def telegram_webhook():
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5050))
     print(f"Starting Flask app on port {port}")
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(host="0.0.0.0", port=port, debug=False)
