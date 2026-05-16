@@ -2,7 +2,6 @@ from news_fetcher import fetch_news
 from filter import filter_articles
 from ranker import rank_articles
 from telegram_bot import send_message
-from storage import save_articles
 import requests
 
 
@@ -10,7 +9,6 @@ def main():
     articles = fetch_news()
     filtered = filter_articles(articles)
     ranked = rank_articles(filtered)
-    save_articles(ranked)
 
     message = "🔥 Today's Top Stories:\n\n"
 
@@ -28,7 +26,7 @@ def main():
 
     # Push ranked articles to webhook server
     response = requests.post(
-        "https://YOUR-RAILWAY-APP.up.railway.app/update-articles",
+        "https://postautomation-production.up.railway.app/update-articles",
         json=ranked
     )
 
