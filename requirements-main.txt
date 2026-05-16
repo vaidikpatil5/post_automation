@@ -1,0 +1,6 @@
+feedparser
+sentence-transformers
+torch
+scikit-learn
+requests
+python-dotenv
