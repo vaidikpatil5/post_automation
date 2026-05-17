@@ -220,8 +220,11 @@ FULL ARTICLE:
 {context['full_article']}
 
 Your job:
-- identify real story beneath headline
-- extract exact numbers/stats
+- identify the real story beneath the headline
+- extract the 3 most tweet-worthy numbers/statistics from the article
+- prioritize numbers that create strong tweet hooks
+- ignore vanity metrics
+- explain why each important number matters
 - hidden implications
 - second-order effects
 - competitive implications
@@ -233,7 +236,12 @@ Do NOT summarize article.
 Return JSON:
 {{
   \"core_angle\": \"\",
-  \"important_stats\": [],
+  \"hook_stats\": [
+    {{
+      \"stat\": \"\",
+      \"why_it_matters\": \"\"
+    }}
+  ],
   \"hidden_implications\": [],
   \"second_order_effects\": [],
   \"contrarian_take\": \"\",
@@ -246,7 +254,7 @@ Return JSON:
     if not payload:
         return {
             "core_angle": "market shift",
-            "important_stats": [],
+            "hook_stats": [],
             "hidden_implications": [],
             "second_order_effects": [],
             "contrarian_take": "Most people are missing the deeper business implication.",
@@ -262,6 +270,13 @@ def _generate_final_tweets_v2(context):
 
     prompt = f"""
 You write elite startup Twitter content.
+
+Examples of good tone:
+"Distribution problems often disguise themselves as product problems."
+
+"The biggest businesses often look stupid in year 1."
+
+"AI startups are becoming infrastructure companies disguised as software companies."
 
 Audience:
 - founders
@@ -292,13 +307,22 @@ Generate exactly 4 tweets:
 1 future prediction
 
 Rules:
+- max 220 characters
+- first sentence must be under 12 words
 - no headline rewrite
 - no generic startup fluff
+- no corporate language
+- no "it is crucial"
+- no "the future of"
+- no essay-style writing
 - no emojis
 - no hashtags
+- use hook_stats aggressively when useful
+- lead with surprising numbers when relevant
 - strong first line
 - native X tone
 - each tweet structurally different
+- optimize for mobile readability
 
 Return JSON:
 {{
