@@ -11,13 +11,18 @@ def default_post_context():
         "title": "",
         "summary": "",
         "link": "",
+        "full_article": "",
+        "full_article_fetch_failed": False,
+        "analysis_output": {},
         "insights": [],
         "hooks": [],
         "style_examples": [],
         "style_context": {},
         "final_tweets": [],
+        "tweet_history": [],
+        "rejected_patterns": [],
         "approved_tweet": "",
-        "approved_index": None
+        "approved_index": None,
     }
 
 
