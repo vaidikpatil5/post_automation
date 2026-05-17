@@ -16,6 +16,7 @@ from storage import (
 
 BOT_TOKEN = get_env("BOT_TOKEN")
 GEMINI_API_KEY = get_env("GEMINI_API_KEY")
+GROQ_API_KEY = get_env("GROQ_API_KEY")
 GITHUB_TOKEN = get_env("GITHUB_TOKEN")
 GITHUB_OWNER = get_env("GITHUB_OWNER")
 GITHUB_REPO = get_env("GITHUB_REPO")
@@ -82,13 +83,64 @@ def _extract_json_payload(raw_text):
 
 def _model_json(prompt):
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-3.1-flash-lite",
         contents=prompt,
     )
 
     raw_text = response.text or ""
     payload = _extract_json_payload(raw_text)
     return payload, raw_text
+
+
+def _fetch_full_article(article_url):
+    try:
+        jina_url = f"https://r.jina.ai/http://{article_url.replace('https://', '').replace('http://', '')}"
+        response = requests.get(jina_url, timeout=20)
+
+        if response.status_code != 200:
+            print(f"Jina fetch failed: {response.status_code}")
+            return ""
+
+        return response.text[:25000]
+
+    except Exception as e:
+        print(f"Full article fetch error: {e}")
+        return ""
+
+
+def _groq_json(prompt):
+    if not GROQ_API_KEY:
+        print("Missing GROQ_API_KEY")
+        return {}, ""
+
+    try:
+        response = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "llama-3.3-70b-versatile",
+                "messages": [
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.9
+            },
+            timeout=30
+        )
+
+        if response.status_code != 200:
+            print(f"Groq error: {response.text}")
+            return {}, ""
+
+        raw_text = response.json()["choices"][0]["message"]["content"]
+        payload = _extract_json_payload(raw_text)
+        return payload, raw_text
+
+    except Exception as e:
+        print(f"Groq request error: {e}")
+        return {}, ""
 
 
 def trigger_github_workflow():
@@ -154,204 +206,135 @@ def _build_post_context(selected):
     return context
 
 
-def _extract_core_angle(context):
+def _analyze_full_article(context):
     prompt = f"""
-You are identifying the SINGLE strongest business narrative from a news article.
+You are an elite startup/business analyst.
 
-Title:
+ARTICLE TITLE:
 {context['title']}
 
-Summary:
+ARTICLE SUMMARY:
 {context['summary']}
 
-Choose only ONE dominant angle from:
-- startup growth
-- business model shift
-- market trend
-- product strategy
-- AI infrastructure
-- founder lesson
-- competition
-- monetization
+FULL ARTICLE:
+{context['full_article']}
 
-Rules:
-- pick only one angle
-- avoid generic summaries
-- explain why this angle matters in one sharp sentence
+Your job:
+- identify real story beneath headline
+- extract exact numbers/stats
+- hidden implications
+- second-order effects
+- competitive implications
+- one contrarian insight
+- 5 tweet-worthy angles
+
+Do NOT summarize article.
 
 Return JSON:
 {{
-  \"angle\": \"\",
-  \"why_this_angle_matters\": \"\"
+  \"core_angle\": \"\",
+  \"important_stats\": [],
+  \"hidden_implications\": [],
+  \"second_order_effects\": [],
+  \"contrarian_take\": \"\",
+  \"tweet_angles\": []
 }}
 """
 
     payload, raw_text = _model_json(prompt)
 
-    angle = payload.get("angle", "")
-    why = payload.get("why_this_angle_matters", "")
+    if not payload:
+        return {
+            "core_angle": "market shift",
+            "important_stats": [],
+            "hidden_implications": [],
+            "second_order_effects": [],
+            "contrarian_take": "Most people are missing the deeper business implication.",
+            "tweet_angles": []
+        }
 
-    if not angle:
-        angle = "market trend"
-
-    if not why:
-        why = "This story signals a broader business shift most people are missing."
-
-    return {
-        "angle": angle,
-        "why_this_angle_matters": why
-    }
+    return payload
 
 
-def _generate_insights(context):
+def _generate_final_tweets_v2(context):
+    rejected_patterns = context.get("rejected_patterns", [])
+    tweet_history = context.get("tweet_history", [])
+
     prompt = f"""
-Article:
+You write elite startup Twitter content.
+
+Audience:
+- founders
+- product people
+- MBA audience
+- operators
+- investors
+
+ARTICLE TITLE:
 {context['title']}
 
-Summary:
+ARTICLE SUMMARY:
 {context['summary']}
 
-Core angle:
-{context.get('angle', '')}
+ANALYSIS OUTPUT:
+{json.dumps(context['analysis_output'], ensure_ascii=True)}
 
-Why it matters:
-{context.get('why_this_angle_matters', '')}
+PREVIOUS DRAFTS:
+{json.dumps(tweet_history, ensure_ascii=True)}
 
-Generate exactly 5 punchy insights.
-
-Rules:
-- each insight under 20 words
-- sound like sharp business observations
-- avoid repeating article facts
-- avoid corporate jargon
-- focus on implications
-
-Return JSON format:
-{{
-  \"insights\": []
-}}
-"""
-
-    payload, raw_text = _model_json(prompt)
-    insights = _normalize_string_list(payload.get("insights"))
-
-    if not insights:
-        insights = _fallback_lines(raw_text)[:5]
-
-    return insights
-
-
-def _generate_hooks(context):
-    prompt = f"""
-Based on these insights:
-{json.dumps(context['insights'], ensure_ascii=True)}
-
-Generate exactly 5 hooks:
-1 shocking data hook
-1 contrarian hook
-1 investor hook
-1 founder hook
-1 prediction hook
-
-Rules:
-- max 12 words
-- no clickbait
-- no emojis
-- no hashtags
-- no generic startup fluff
-
-Return JSON:
-{{
-  \"hooks\": []
-}}
-"""
-
-    payload, raw_text = _model_json(prompt)
-    hooks = _normalize_string_list(payload.get("hooks"))
-
-    if not hooks:
-        hooks = _fallback_lines(raw_text)[:5]
-
-    return hooks
-
-
-def _generate_final_tweets(context, style_context):
-    prompt = f"""
-You are writing tweets for ambitious startup/product/business audiences.
-
-Article:
-{context['title']}
-
-Summary:
-{context['summary']}
-
-Core angle:
-{context.get('angle', '')}
-
-Insights:
-{json.dumps(context['insights'], ensure_ascii=True)}
-
-Hooks:
-{json.dumps(context['hooks'], ensure_ascii=True)}
-
-Writing style:
-{json.dumps(style_context, ensure_ascii=True)}
+AVOID THESE ISSUES:
+{json.dumps(rejected_patterns, ensure_ascii=True)}
 
 Generate exactly 4 tweets:
-1 contrarian take
-1 investor take
+1 contrarian
+1 investor
 1 founder lesson
-1 prediction take
+1 future prediction
 
 Rules:
-- max 280 chars
-- strong first line
-- no headline summary
-- no repeating article title wording
-- no generic AI phrases
+- no headline rewrite
+- no generic startup fluff
 - no emojis
 - no hashtags
-- sound native to X
+- strong first line
+- native X tone
+- each tweet structurally different
 
 Return JSON:
 {{
-  \"final_tweets\": []
+  \"tweets\": []
 }}
 """
 
-    payload, raw_text = _model_json(prompt)
+    payload, raw_text = _groq_json(prompt)
 
-    tweets = _normalize_string_list(
-        payload.get("final_tweets")
-    )
+    tweets = _normalize_string_list(payload.get("tweets"))
 
     if not tweets:
         tweets = _fallback_lines(raw_text)[:4]
 
     if not tweets:
-        tweets = [
-            "Couldn't generate clean drafts for this article. Try REGEN or select another story."
-        ]
+        tweets = ["Could not generate tweet drafts."]
 
     return tweets
 
 
 def _run_generation_pipeline(selected):
     context = _build_post_context(selected)
-    angle_data = _extract_core_angle(context)
-    context.update(angle_data)
+
+    context["full_article"] = _fetch_full_article(context["link"])
     save_post_context(context)
 
-    context["insights"] = _generate_insights(context)
+    context["analysis_output"] = _analyze_full_article(context)
     save_post_context(context)
 
-    context["hooks"] = _generate_hooks(context)
-    save_post_context(context)
+    context.setdefault("tweet_history", [])
+    context.setdefault("rejected_patterns", [])
 
-    context["style_context"] = STYLE_CONTEXT
-    save_post_context(context)
+    tweets = _generate_final_tweets_v2(context)
+    context["final_tweets"] = tweets
+    context["tweet_history"].append(tweets)
 
-    context["final_tweets"] = _generate_final_tweets(context, STYLE_CONTEXT)
     save_post_context(context)
 
     return context
@@ -406,10 +389,16 @@ def _handle_regen_command(user_reply):
         send_message("No active article context found. Select a story first.")
         return True
 
-    context["final_tweets"] = _generate_final_tweets(
-        context,
-        context.get("style_context", STYLE_CONTEXT)
-    )
+    context.setdefault("rejected_patterns", [])
+    context.setdefault("tweet_history", [])
+
+    context["rejected_patterns"].append("previous drafts were not engaging enough")
+
+    new_tweets = _generate_final_tweets_v2(context)
+
+    context["final_tweets"] = new_tweets
+    context["tweet_history"].append(new_tweets)
+
     save_post_context(context)
 
     send_message("♻️ Regenerated drafts:\n\n" + _format_drafts_message(context))
