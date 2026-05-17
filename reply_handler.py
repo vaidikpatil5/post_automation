@@ -154,156 +154,192 @@ def _build_post_context(selected):
     return context
 
 
-def _generate_insights(context):
+def _extract_core_angle(context):
     prompt = f"""
-You are a startup analyst.
-Analyze this news deeply.
+You are identifying the SINGLE strongest business narrative from a news article.
+
 Title:
-{context["title"]}
+{context['title']}
+
 Summary:
-{context["summary"]}
-Extract:
-1. Hidden business implication
-2. Second-order market impact
-3. Why founders should care
-4. Why product/growth teams should care
-5. What most people reading this news are missing
+{context['summary']}
+
+Choose only ONE dominant angle from:
+- startup growth
+- business model shift
+- market trend
+- product strategy
+- AI infrastructure
+- founder lesson
+- competition
+- monetization
+
 Rules:
-- avoid summarizing
-- think like investor + founder + operator
-- be concise
-- focus on hidden signals
-Return JSON format:
+- pick only one angle
+- avoid generic summaries
+- explain why this angle matters in one sharp sentence
+
+Return JSON:
 {{
-  "insights": []
+  \"angle\": \"\",
+  \"why_this_angle_matters\": \"\"
 }}
 """
+
+    payload, raw_text = _model_json(prompt)
+
+    angle = payload.get("angle", "")
+    why = payload.get("why_this_angle_matters", "")
+
+    if not angle:
+        angle = "market trend"
+
+    if not why:
+        why = "This story signals a broader business shift most people are missing."
+
+    return {
+        "angle": angle,
+        "why_this_angle_matters": why
+    }
+
+
+def _generate_insights(context):
+    prompt = f"""
+Article:
+{context['title']}
+
+Summary:
+{context['summary']}
+
+Core angle:
+{context.get('angle', '')}
+
+Why it matters:
+{context.get('why_this_angle_matters', '')}
+
+Generate exactly 5 punchy insights.
+
+Rules:
+- each insight under 20 words
+- sound like sharp business observations
+- avoid repeating article facts
+- avoid corporate jargon
+- focus on implications
+
+Return JSON format:
+{{
+  \"insights\": []
+}}
+"""
+
     payload, raw_text = _model_json(prompt)
     insights = _normalize_string_list(payload.get("insights"))
+
     if not insights:
         insights = _fallback_lines(raw_text)[:5]
+
     return insights
 
 
 def _generate_hooks(context):
     prompt = f"""
 Based on these insights:
-{json.dumps(context["insights"], ensure_ascii=True)}
-Generate 5 strong hooks for X.
-Hook types:
-1. Contrarian
-2. Curiosity
-3. Bold prediction
-4. Founder lesson
-5. Product lesson
+{json.dumps(context['insights'], ensure_ascii=True)}
+
+Generate exactly 5 hooks:
+1 shocking data hook
+1 contrarian hook
+1 investor hook
+1 founder hook
+1 prediction hook
+
 Rules:
-- short
-- scroll stopping
+- max 12 words
 - no clickbait
-- no cringe
 - no emojis
 - no hashtags
+- no generic startup fluff
+
 Return JSON:
 {{
-  "hooks": []
+  \"hooks\": []
 }}
 """
+
     payload, raw_text = _model_json(prompt)
     hooks = _normalize_string_list(payload.get("hooks"))
+
     if not hooks:
         hooks = _fallback_lines(raw_text)[:5]
+
     return hooks
 
 
 def _generate_final_tweets(context, style_context):
     prompt = f"""
-You are writing tweets for a young ambitious MBA/product/growth audience interested in:
-- startups
-- AI
-- fintech
-- business models
-- growth
-- product strategy
+You are writing tweets for ambitious startup/product/business audiences.
+
 Article:
-{context["title"]}
+{context['title']}
+
 Summary:
-{context["summary"]}
+{context['summary']}
+
+Core angle:
+{context.get('angle', '')}
+
 Insights:
-{json.dumps(context["insights"], ensure_ascii=True)}
+{json.dumps(context['insights'], ensure_ascii=True)}
+
 Hooks:
-{json.dumps(context["hooks"], ensure_ascii=True)}
+{json.dumps(context['hooks'], ensure_ascii=True)}
+
 Writing style:
 {json.dumps(style_context, ensure_ascii=True)}
+
+Generate exactly 4 tweets:
+1 contrarian take
+1 investor take
+1 founder lesson
+1 prediction take
+
 Rules:
-- sound human
-- sound sharp
-- slightly contrarian
-- operator mindset
-- concise
-- no corporate jargon
+- max 280 chars
+- strong first line
+- no headline summary
+- no repeating article title wording
 - no generic AI phrases
 - no emojis
 - no hashtags
-Important:
-- Do NOT rewrite or summarize the headline
-- Focus on implications, hidden signals, and strong opinions
-- Make each tweet feel native to X
-- Make the first line scroll-stopping
+- sound native to X
 
-Generate:
-1 short viral tweet
-1 contrarian tweet
-1 thread opener
-1 founder lesson tweet
 Return JSON:
 {{
-  "final_tweets": []
+  \"final_tweets\": []
 }}
 """
+
     payload, raw_text = _model_json(prompt)
-    tweets = _normalize_string_list(payload.get("final_tweets"))
 
-    # First fallback: try extracting JSON again from raw text
+    tweets = _normalize_string_list(
+        payload.get("final_tweets")
+    )
+
     if not tweets:
-        parsed_payload = _extract_json_payload(raw_text)
+        tweets = _fallback_lines(raw_text)[:4]
 
-        if parsed_payload.get("final_tweets"):
-            tweets = _normalize_string_list(
-                parsed_payload.get("final_tweets")
-            )
-
-    # Second fallback: if Gemini returns numbered plain text instead of JSON
-    if not tweets:
-        fallback_candidates = []
-
-        for line in raw_text.splitlines():
-            cleaned = line.strip()
-
-            # skip markdown/json formatting noise
-            if cleaned.startswith("```"):
-                continue
-            if cleaned in ["{", "}", "[", "]"]:
-                continue
-            if '"final_tweets"' in cleaned:
-                continue
-
-            # match numbered tweet lines like: 1. tweet text
-            match = re.match(r"^\d+[.)]\s*(.+)", cleaned)
-            if match:
-                fallback_candidates.append(match.group(1).strip())
-
-        tweets = fallback_candidates[:4]
-
-    # Final fallback → fail gracefully instead of sending garbage
     if not tweets:
         tweets = [
-            "Couldn’t generate clean drafts for this article. Try REGEN or select another story."
+            "Couldn't generate clean drafts for this article. Try REGEN or select another story."
         ]
 
     return tweets
 
+
 def _run_generation_pipeline(selected):
     context = _build_post_context(selected)
+    angle_data = _extract_core_angle(context)
+    context.update(angle_data)
     save_post_context(context)
 
     context["insights"] = _generate_insights(context)
