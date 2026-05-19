@@ -1,53 +1,41 @@
-RELEVANT_KEYWORDS = [
-    "ai",
-    "startup",
-    "saas",
-    "fintech",
-    "payments",
-    "product",
-    "growth",
-    "consumer",
-    "ecommerce",
-    "funding",
-    "acquisition",
-    "launch",
-    "tech"
-]
-
-IRRELEVANT_KEYWORDS = [
-    "celebrity",
-    "politics",
-    "sports",
-    "movie",
-    "entertainment"
-]
+from editorial_intelligence import (
+    FILTER_THEME_THRESHOLD,
+    IRRELEVANT_KEYWORDS,
+    build_article_text,
+    get_theme_matches,
+)
 
 
 def filter_articles(articles):
     filtered_articles = []
-    seen_titles = set()
+    seen_fingerprints = set()
 
     for article in articles:
-        text = (
-            article["title"] + " " + article["summary"]
-        ).lower()
-
-        relevant_match = any(
-            keyword in text for keyword in RELEVANT_KEYWORDS
-        )
+        text = build_article_text(article)
+        lowered_text = text.lower()
+        thematic_match = get_theme_matches(text)
+        article_key = article.get("content_fingerprint") or article.get("title", "").lower().strip()
 
         irrelevant_match = any(
-            keyword in text for keyword in IRRELEVANT_KEYWORDS
+            keyword in lowered_text for keyword in IRRELEVANT_KEYWORDS
         )
 
-        normalized_title = article["title"].lower().strip()
+        article["theme_matches"] = thematic_match["matched_themes"]
+        article["theme_similarity_score"] = thematic_match["theme_similarity_score"]
+        article.setdefault("editorial_metadata", {})
+        article["editorial_metadata"]["filter"] = {
+            "matched_themes": thematic_match["matched_themes"],
+            "theme_similarity_score": thematic_match["theme_similarity_score"],
+            "irrelevant_match": irrelevant_match,
+            "passed_thematic_filter": thematic_match["theme_similarity_score"] >= FILTER_THEME_THRESHOLD,
+        }
 
         if (
-            relevant_match
+            thematic_match["theme_similarity_score"] >= FILTER_THEME_THRESHOLD
             and not irrelevant_match
-            and normalized_title not in seen_titles
+            and article_key not in seen_fingerprints
         ):
             filtered_articles.append(article)
-            seen_titles.add(normalized_title)
+            seen_fingerprints.add(article_key)
 
     return filtered_articles

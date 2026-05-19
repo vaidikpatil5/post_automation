@@ -1,20 +1,25 @@
-import json
 from article_fetcher import fetch_full_article
 from llm_clients import (
     model_json,
     groq_json,
     normalize_string_list,
     fallback_lines,
+    DEFAULT_GEMINI_MODEL,
+    DEFAULT_GROQ_MODEL,
+)
+from prompts import (
+    build_signal_analysis_prompt,
+    build_thesis_generation_prompt,
+    build_narrative_compression_prompt,
+    build_final_post_prompt,
 )
 from storage import default_post_context, save_post_context
 
 
-STYLE_EXAMPLES = [
-    "Most social apps don't die because of competition.\nThey die because they stop being fun.",
-    "The biggest businesses often look stupid in year 1.",
-    "Distribution problems often disguise themselves as product problems.",
-    "People underestimate how much trust matters in financial products.",
-]
+STAGE_1_SIGNAL_MODEL = DEFAULT_GEMINI_MODEL
+STAGE_2_THESIS_MODEL = DEFAULT_GROQ_MODEL
+STAGE_3_NARRATIVE_MODEL = DEFAULT_GEMINI_MODEL
+STAGE_4_POST_MODEL = DEFAULT_GROQ_MODEL
 
 
 def build_post_context(selected):
@@ -22,196 +27,132 @@ def build_post_context(selected):
     context["title"] = selected.get("title", "")
     context["summary"] = selected.get("summary", "")
     context["link"] = selected.get("link", "")
-    context["style_examples"] = STYLE_EXAMPLES[:]
+    if selected.get("narrative_candidate"):
+        context["narrative_candidate"] = selected["narrative_candidate"]
     return context
 
 
-def analyze_full_article(context):
-    full_article = context.get("full_article", "")
-    full_article_available = bool(full_article and full_article.strip())
+def _default_signal_analysis():
+    return {
+        "core_signal": "",
+        "broken_assumption": "",
+        "observable_driver": "",
+        "causal_mechanism": "",
+        "operational_shift": "",
+        "incentive_change": "",
+        "expectation_violation": "",
+        "operational_consequences": [],
+        "second_order_effects": [],
+        "startup_opportunities": [],
+        "hidden_implications": [],
+        "missed_by_most_people": "",
+    }
 
-    prompt = f"""
-You are an elite startup/business analyst.
 
-ARTICLE TITLE:
-{context['title']}
+def _default_thesis_output():
+    return {
+        "theses": [],
+        "contrarian_views": [],
+        "long_term_implications": [],
+        "product_lessons": [],
+        "market_dynamics": [],
+    }
 
-ARTICLE SUMMARY:
-{context['summary']}
 
-ARTICLE URL:
-{context['link']}
+def _default_narrative_output():
+    return {
+        "hooks": [],
+        "compressed_narratives": [],
+        "ending_insights": [],
+    }
 
-FULL ARTICLE:
-{full_article if full_article_available else "JINA_FETCH_FAILED_OR_EMPTY"}
 
-If FULL ARTICLE is missing, use ARTICLE URL + title + summary to analyze.
+def _extract_posts_from_payload(payload):
+    posts = normalize_string_list(payload.get("posts"))
 
-Your job:
-- identify the real story beneath the headline
-- extract the 3 most tweet-worthy numbers/statistics from the article
-- prioritize numbers that create strong tweet hooks
-- ignore vanity metrics
-- explain why each important number matters
-- hidden implications
-- second-order effects
-- competitive implications
-- one contrarian insight
-- 5 tweet-worthy angles
+    if posts:
+        return posts
 
-Do NOT summarize article.
+    alternative_fields = [
+        payload.get("post_1"),
+        payload.get("post_2"),
+        payload.get("post_3"),
+        payload.get("tweet_1"),
+        payload.get("tweet_2"),
+        payload.get("tweet_3"),
+        payload.get("operational_insight"),
+        payload.get("market_insight"),
+        payload.get("founder_insight"),
+        payload.get("ecosystem_insight"),
+    ]
+    return [item.strip() for item in alternative_fields if isinstance(item, str) and item.strip()]
 
-Return JSON:
-{{
-  \"core_angle\": \"\",
-  \"hook_stats\": [
-    {{
-      \"stat\": \"\",
-      \"why_it_matters\": \"\"
-    }}
-  ],
-  \"hidden_implications\": [],
-  \"second_order_effects\": [],
-  \"contrarian_take\": \"\",
-  \"tweet_angles\": []
-}}
-"""
 
-    payload, _raw_text = model_json(prompt)
+def get_current_posts(context):
+    posts = context.get("final_posts", [])
+    if posts:
+        return posts
+    return context.get("final_tweets", [])
 
+
+def run_signal_analysis(context):
+    payload, _raw_text = model_json(
+        build_signal_analysis_prompt(context),
+        model=STAGE_1_SIGNAL_MODEL,
+    )
     if not payload:
-        return {
-            "core_angle": "market shift",
-            "hook_stats": [],
-            "hidden_implications": [],
-            "second_order_effects": [],
-            "contrarian_take": "Most people are missing the deeper business implication.",
-            "tweet_angles": [],
-        }
+        return _default_signal_analysis()
 
-    return payload
+    result = _default_signal_analysis()
+    result.update(payload)
+    return result
+
+
+def run_thesis_generation(context):
+    payload, _raw_text = groq_json(
+        build_thesis_generation_prompt(context),
+        model=STAGE_2_THESIS_MODEL,
+    )
+    if not payload:
+        return _default_thesis_output()
+
+    result = _default_thesis_output()
+    result.update(payload)
+    return result
+
+
+def run_narrative_compression(context):
+    payload, _raw_text = model_json(
+        build_narrative_compression_prompt(context),
+        model=STAGE_3_NARRATIVE_MODEL,
+    )
+    if not payload:
+        return _default_narrative_output()
+
+    result = _default_narrative_output()
+    result.update(payload)
+    return result
+
+
+def run_final_post_generation(context):
+    payload, raw_text = groq_json(
+        build_final_post_prompt(context),
+        model=STAGE_4_POST_MODEL,
+    )
+
+    posts = _extract_posts_from_payload(payload)
+
+    if not posts:
+        posts = fallback_lines(raw_text)[:3]
+
+    if not posts:
+        posts = ["Could not generate post drafts."]
+
+    return posts
 
 
 def generate_final_tweets_v2(context):
-    rejected_patterns = context.get("rejected_patterns", [])
-    tweet_history = context.get("tweet_history", [])
-
-    prompt = f"""
-You write elite startup Twitter content.
-
-Examples of good tone:
-"Distribution problems often disguise themselves as product problems."
-
-"The biggest businesses often look stupid in year 1."
-
-"AI startups are becoming infrastructure companies disguised as software companies."
-
-Reasoning framework:
-Step 1: Identify the most interesting fact/stat/observation from the article
-Step 2: Ask:
-"What behavior changes because of this?"
-Step 3: Ask:
-"What second-order business implication emerges?"
-Step 4: Convert that into ONE sharp insight
-Step 5: Write it in a clean, readable X format
-Good transformation examples:
-Example 1:
-Fact: Anthropic hit $30B revenue
-Insight: AI labs are becoming infrastructure-heavy businesses
-Tweet: "The best model may not win. The company with the best compute access might."
-Example 2:
-Fact: India has $141B in listed tech market cap
-Insight: founders now face public market discipline
-Tweet: "Public markets reward operational discipline. Different game."
-Example 3:
-Fact: startup employees are getting liquidity
-Insight: talent becomes more willing to join startups
-Tweet: "Visible startup wealth creation changes talent behavior."
-
-Audience:
-- founders
-- product people
-- MBA audience
-- operators
-- investors
-
-ARTICLE TITLE:
-{context['title']}
-
-ARTICLE SUMMARY:
-{context['summary']}
-
-ANALYSIS OUTPUT:
-{json.dumps(context['analysis_output'], ensure_ascii=True)}
-
-PREVIOUS DRAFTS:
-{json.dumps(tweet_history, ensure_ascii=True)}
-
-AVOID THESE ISSUES:
-{json.dumps(rejected_patterns, ensure_ascii=True)}
-
-Generate exactly 4 tweets:
-1 operational insight
-1 market insight
-1 founder insight
-1 ecosystem insight
-
-Rules:
-- each tweet should focus on ONE clear idea
-- start with either:
-  a strong stat
-  OR a sharp observation
-- explain why it matters
-- end with a memorable takeaway
-- use short paragraphs for readability
-- 120-260 characters preferred
-- no vague slogans
-- no headline rewrites
-- no fake predictions
-- no fabricated numbers
-- no fabricated acquisitions or outcomes
-- no corporate language
-- no generic startup motivation content
-- no essay-style writing
-- only make claims grounded in article + analysis
-- optimize for clarity over sounding clever
-- each tweet should feel complete and logically grounded
-
-Return JSON:
-{{
-  \"tweets\": []
-}}
-
-Important:
-- Return ONLY valid JSON
-- Do not wrap in markdown code fences
-- tweets must be an array of plain strings
-"""
-
-    payload, raw_text = groq_json(prompt)
-
-    tweets = normalize_string_list(payload.get("tweets"))
-
-    if not tweets:
-        alternative_fields = [
-            payload.get("operational_insight"),
-            payload.get("market_insight"),
-            payload.get("founder_insight"),
-            payload.get("ecosystem_insight"),
-            payload.get("tweet_1"),
-            payload.get("tweet_2"),
-            payload.get("tweet_3"),
-            payload.get("tweet_4"),
-        ]
-        tweets = [item.strip() for item in alternative_fields if isinstance(item, str) and item.strip()]
-
-    if not tweets:
-        tweets = fallback_lines(raw_text)[:4]
-
-    if not tweets:
-        tweets = ["Could not generate tweet drafts."]
-
-    return tweets
+    return run_final_post_generation(context)
 
 
 def run_generation_pipeline(selected):
@@ -221,16 +162,30 @@ def run_generation_pipeline(selected):
     context["full_article_fetch_failed"] = not bool(context["full_article"])
     save_post_context(context)
 
-    context["analysis_output"] = analyze_full_article(context)
+    context["signal_analysis"] = run_signal_analysis(context)
+    context["analysis_output"] = context["signal_analysis"]
+    # Backward compatibility for consumers expecting market_shift key.
+    if not context["signal_analysis"].get("market_shift"):
+        context["signal_analysis"]["market_shift"] = (
+            context["signal_analysis"].get("operational_shift")
+            or context["signal_analysis"].get("causal_mechanism")
+            or ""
+        )
+    save_post_context(context)
+
+    context["thesis_output"] = run_thesis_generation(context)
+    save_post_context(context)
+
+    context["narrative_output"] = run_narrative_compression(context)
     save_post_context(context)
 
     context.setdefault("tweet_history", [])
     context.setdefault("rejected_patterns", [])
 
-    tweets = generate_final_tweets_v2(context)
-    context["final_tweets"] = tweets
-    context["tweet_history"].append(tweets)
-
+    posts = run_final_post_generation(context)
+    context["final_posts"] = posts
+    context["final_tweets"] = posts
+    context["tweet_history"].append(posts)
     save_post_context(context)
 
     return context
@@ -238,14 +193,14 @@ def run_generation_pipeline(selected):
 
 def format_drafts_message(context):
     lines = []
-    for idx, tweet in enumerate(context.get("final_tweets", []), 1):
-        lines.append(f"{idx}. {tweet}")
+    for idx, post in enumerate(get_current_posts(context), 1):
+        lines.append(f"{idx}. {post}")
 
-    tweets_block = "\n\n".join(lines) if lines else "No tweets generated."
+    posts_block = "\n\n".join(lines) if lines else "No posts generated."
     return (
         f"📰 {context.get('title', '')}\n\n"
         f"🔗 {context.get('link', '')}\n\n"
         f"Generated X Drafts:\n\n"
-        f"{tweets_block}\n\n"
+        f"{posts_block}\n\n"
         f"Reply with: APPROVE <number> to approve one draft OR REGEN to generate fresh drafts."
     )
