@@ -54,7 +54,7 @@ def handle_regen_command(user_reply):
     context.setdefault("tweet_history", [])
 
     context["rejected_patterns"].append(
-        "previous drafts were not engaging enough"
+        "previous drafts were too abstract, insufficiently mechanism-grounded, or overclaimed beyond the article"
     )
 
     new_tweets = generate_final_tweets_v2(context)

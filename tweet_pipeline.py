@@ -27,18 +27,25 @@ def build_post_context(selected):
     context["title"] = selected.get("title", "")
     context["summary"] = selected.get("summary", "")
     context["link"] = selected.get("link", "")
+    if selected.get("narrative_candidate"):
+        context["narrative_candidate"] = selected["narrative_candidate"]
     return context
 
 
 def _default_signal_analysis():
     return {
-        "core_signal": "A structural shift is emerging beneath the headline.",
-        "broken_assumption": "The old market assumption is becoming less reliable.",
+        "core_signal": "",
+        "broken_assumption": "",
+        "observable_driver": "",
+        "causal_mechanism": "",
+        "operational_shift": "",
+        "incentive_change": "",
+        "expectation_violation": "",
+        "operational_consequences": [],
         "second_order_effects": [],
-        "market_shift": "Market structure is changing faster than most readers realize.",
         "startup_opportunities": [],
         "hidden_implications": [],
-        "missed_by_most_people": "The hidden structural implication matters more than the headline itself.",
+        "missed_by_most_people": "",
     }
 
 
@@ -157,6 +164,13 @@ def run_generation_pipeline(selected):
 
     context["signal_analysis"] = run_signal_analysis(context)
     context["analysis_output"] = context["signal_analysis"]
+    # Backward compatibility for consumers expecting market_shift key.
+    if not context["signal_analysis"].get("market_shift"):
+        context["signal_analysis"]["market_shift"] = (
+            context["signal_analysis"].get("operational_shift")
+            or context["signal_analysis"].get("causal_mechanism")
+            or ""
+        )
     save_post_context(context)
 
     context["thesis_output"] = run_thesis_generation(context)
