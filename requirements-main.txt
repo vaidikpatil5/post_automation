@@ -1,6 +1,11 @@
+Flask==3.1.3
+requests==2.34.2
+google-genai==2.3.0
+python-dotenv==1.2.2
+trafilatura==2.0.0
+groq
 feedparser
 sentence-transformers
 torch
 scikit-learn
-requests
-python-dotenv
+numpy

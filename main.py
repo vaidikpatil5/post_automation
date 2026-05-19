@@ -3,12 +3,17 @@ from filter import filter_articles
 from ranker import rank_articles
 from telegram_bot import send_message
 import requests
+from narrative_priors import match_narrative_priors
 
 
 def main():
     articles = fetch_news()
     filtered = filter_articles(articles)
     ranked = rank_articles(filtered)
+
+    # Pre-compute narrative matching using embedding infrastructure on GitHub Actions runtime
+    for article in ranked:
+        article["narrative_match"] = match_narrative_priors(article)
 
     message = "🔥 Today's Top Stories:\n\n"
 

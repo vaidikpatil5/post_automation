@@ -7,7 +7,6 @@ from llm_clients import (
     DEFAULT_GEMINI_MODEL,
     DEFAULT_GROQ_MODEL,
 )
-from narrative_priors import match_narrative_priors
 from prompts import (
     build_tension_extraction_prompt,
     build_implication_refinement_prompt,
@@ -193,15 +192,28 @@ def get_current_posts(context):
 
 
 def run_narrative_matching(context):
-    article = {
-        "title": context.get("title", ""),
-        "summary": context.get("summary", ""),
-        "link": context.get("link", ""),
-    }
-    result = match_narrative_priors(article)
-    if not result.get("matched_narratives"):
-        return _default_narrative_match()
-    return result
+    # 1. Use pre-computed narrative match if present in context (e.g. from GitHub Actions main.py run)
+    if "narrative_match" in context and context["narrative_match"].get("matched_narratives"):
+        return context["narrative_match"]
+
+    # 2. Otherwise, check if we can run it locally (e.g. during local tests where torch is available)
+    try:
+        import torch
+        import sentence_transformers
+        from narrative_priors import match_narrative_priors
+
+        article = {
+            "title": context.get("title", ""),
+            "summary": context.get("summary", ""),
+            "link": context.get("link", ""),
+        }
+        result = match_narrative_priors(article)
+        if result and result.get("matched_narratives"):
+            return result
+    except ImportError:
+        pass
+
+    return _default_narrative_match()
 
 
 def run_tension_extraction(context):

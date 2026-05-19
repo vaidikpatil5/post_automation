@@ -4,7 +4,7 @@ Persistent strategic worldview structures for worldview-first cognition.
 Articles activate narrative priors — they are not treated as blank reasoning problems.
 """
 
-from editorial_intelligence import build_article_text, cosine_scores, encode_texts
+from utils import build_article_text
 
 MATCH_TOP_K = 3
 MATCH_MIN_SCORE = 0.30
@@ -533,6 +533,7 @@ def _keyword_boost(prior, article_text):
 def _get_prior_embeddings():
     global _prior_embeddings
     if _prior_embeddings is None:
+        from editorial_intelligence import encode_texts
         texts = [build_prior_embed_text(p) for p in NARRATIVE_PRIORS]
         _prior_embeddings = encode_texts(texts)
     return _prior_embeddings
@@ -549,6 +550,7 @@ def match_narrative_priors(article, top_k=MATCH_TOP_K, min_score=MATCH_MIN_SCORE
     """
     Primary cognition layer: which strategic narratives does this article activate?
     """
+    from editorial_intelligence import encode_texts, cosine_scores
     article_text = build_article_text(article)
     if not article_text.strip():
         return {

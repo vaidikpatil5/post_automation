@@ -1,8 +1,7 @@
 import re
 from urllib.parse import urlparse
 
-from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
+from utils import build_article_text, normalize_domain
 
 
 THEMATIC_INTERESTS = [
@@ -217,39 +216,52 @@ FILTER_THEME_THRESHOLD = 0.24
 FILTER_THEME_FLOOR = 0.20
 EDITORIAL_SHORTLIST_SIZE = 8
 
-_model = SentenceTransformer(MODEL_NAME)
-_theme_embeddings = _model.encode(THEMATIC_INTERESTS)
-_audience_embedding = _model.encode([AUDIENCE_PROFILE])
+_embedding_model = None
+_theme_embeddings = None
+_audience_embedding = None
 
 
-def build_article_text(article):
-    return f"{article.get('title', '')} {article.get('summary', '')}".strip()
+def get_embedding_model():
+    global _embedding_model
+    if _embedding_model is None:
+        from sentence_transformers import SentenceTransformer
+        _embedding_model = SentenceTransformer(MODEL_NAME)
+    return _embedding_model
+
+
+def get_theme_embeddings():
+    global _theme_embeddings
+    if _theme_embeddings is None:
+        model = get_embedding_model()
+        _theme_embeddings = model.encode(THEMATIC_INTERESTS)
+    return _theme_embeddings
+
+
+def get_audience_embedding():
+    global _audience_embedding
+    if _audience_embedding is None:
+        model = get_embedding_model()
+        _audience_embedding = model.encode([AUDIENCE_PROFILE])
+    return _audience_embedding
 
 
 def encode_texts(texts):
     if not texts:
         return []
-    return _model.encode(texts)
+    model = get_embedding_model()
+    return model.encode(texts)
 
 
 def cosine_scores(left_embeddings, right_embeddings):
     if len(left_embeddings) == 0 or len(right_embeddings) == 0:
         return []
+    from sklearn.metrics.pairwise import cosine_similarity
     return cosine_similarity(left_embeddings, right_embeddings)
-
-
-def normalize_domain(url):
-    if not url:
-        return ""
-    domain = urlparse(url).netloc.lower().strip()
-    if domain.startswith("www."):
-        domain = domain[4:]
-    return domain
 
 
 def get_theme_matches(text):
     article_embedding = encode_texts([text])
-    similarities = cosine_scores(article_embedding, _theme_embeddings)[0]
+    similarities = cosine_scores(article_embedding, get_theme_embeddings())[0]
 
     ranked = sorted(
         (
@@ -276,7 +288,7 @@ def get_theme_matches(text):
 
 
 def get_audience_alignment_score(article_embedding):
-    return float(cosine_scores(article_embedding, _audience_embedding)[0][0])
+    return float(cosine_scores(article_embedding, get_audience_embedding())[0][0])
 
 
 def score_contradiction(text):
