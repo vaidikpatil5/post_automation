@@ -7,6 +7,8 @@ from config import get_env
 
 GEMINI_API_KEY = get_env("GEMINI_API_KEY")
 GROQ_API_KEY = get_env("GROQ_API_KEY")
+DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
+DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
 
 if not GEMINI_API_KEY:
     raise RuntimeError("Missing GEMINI_API_KEY. Set it in .env.")
@@ -97,9 +99,9 @@ def extract_json_payload(raw_text):
     return {}
 
 
-def model_json(prompt):
+def model_json(prompt, model=DEFAULT_GEMINI_MODEL):
     response = _client.models.generate_content(
-        model="gemini-3.1-flash-lite",
+        model=model,
         contents=prompt,
     )
 
@@ -108,7 +110,7 @@ def model_json(prompt):
     return payload, raw_text
 
 
-def groq_json(prompt):
+def groq_json(prompt, model=DEFAULT_GROQ_MODEL):
     if not GROQ_API_KEY:
         print("Missing GROQ_API_KEY")
         return {}, ""
@@ -121,7 +123,7 @@ def groq_json(prompt):
                 "Content-Type": "application/json",
             },
             json={
-                "model": "llama-3.3-70b-versatile",
+                "model": model,
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.9,
             },

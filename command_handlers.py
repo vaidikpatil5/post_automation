@@ -1,7 +1,7 @@
 import re
 from telegram_bot import send_message
 from storage import load_post_context, save_post_context, save_approved_post
-from tweet_pipeline import generate_final_tweets_v2, format_drafts_message
+from tweet_pipeline import generate_final_tweets_v2, format_drafts_message, get_current_posts
 from github_utils import trigger_github_workflow
 
 
@@ -12,7 +12,7 @@ def handle_approval_command(user_reply):
 
     approved_index = int(match.group(1))
     context = load_post_context()
-    tweets = context.get("final_tweets", [])
+    tweets = get_current_posts(context)
 
     if approved_index < 1 or approved_index > len(tweets):
         send_message("Invalid approval number. Reply with APPROVE <number> from the latest drafts.")
@@ -59,6 +59,7 @@ def handle_regen_command(user_reply):
 
     new_tweets = generate_final_tweets_v2(context)
 
+    context["final_posts"] = new_tweets
     context["final_tweets"] = new_tweets
     context["tweet_history"].append(new_tweets)
 
